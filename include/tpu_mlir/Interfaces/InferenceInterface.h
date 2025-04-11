@@ -11,6 +11,9 @@
 
 #include "mlir/IR/OpDefinition.h"
 
+// 存储inference阶段的参数
+// inputs和outputs是指向float的指针，主要指inference阶段输入数据位置和输出存储位置。
+// handle是一个void*指针，主要用于存储模型句柄（optional）
 namespace tpu_mlir {
 struct InferenceParameter {
   std::vector<float *> inputs;

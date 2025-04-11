@@ -48,6 +48,8 @@ class Top_Attr<string attrName, string attrMnemonic, list<Trait> traits = []>
 }
 
 // A string attribute whose value are one of the values in `cases`.
+// 定义一个字符串属性，其值是`cases`中的一个值
+// 使用cpred语法来定义属性的值
 class AnyStrAttrOf<list<string> cases> : StringBasedAttr<
   CPred<!foldl(
       "$_self.cast<StringAttr>().getValue() == \"" # !head(cases) # "\"",
@@ -241,6 +243,10 @@ def Top_UnTupleOp: Top_BaseOp<"UnTuple"> {
 }
 
 // === Function Op =====
+// 定义每个Top op都要实现的interface
+// "InferenceInterface" is used to do inference for operation, which would be introduced later.
+// "FlopsInterface" is used to count FLOPs (floating point operations) of operation,
+// as we are interested in the FLOPs of a NN model, also we use it to evaluate chip performance after running on the chip.
 class Top_Op<string mnemonic, list<Trait> traits = []> :
     Top_BaseOp<mnemonic, !listconcat(traits,
        [DeclareOpInterfaceMethods<InferenceInterface>,

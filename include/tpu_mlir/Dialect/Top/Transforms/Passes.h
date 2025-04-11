@@ -17,6 +17,7 @@
 namespace tpu_mlir {
 namespace top {
 
+// Top层面共实现这几个passes
 std::unique_ptr<OperationPass<ModuleOp>> createInitPass();
 std::unique_ptr<OperationPass<ModuleOp>> createDeinitPass();
 std::unique_ptr<OperationPass<ModuleOp>> createProcessorAssignPass();

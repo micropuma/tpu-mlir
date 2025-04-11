@@ -12,6 +12,7 @@
 
 include "mlir/IR/OpBase.td"
 
+// operation推理阶段的接口
 def InferenceInterface : OpInterface<"InferenceInterface"> {
   let description = [{
   }];

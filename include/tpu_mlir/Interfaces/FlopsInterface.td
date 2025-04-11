@@ -12,6 +12,7 @@
 
 include "mlir/IR/OpBase.td"
 
+// 获取operation在推理阶段的FLOPs数据
 def FlopsInterface : OpInterface<"FlopsInterface"> {
   let description = [{
   }];

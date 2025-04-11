@@ -12,6 +12,7 @@
 
 include "mlir/IR/OpBase.td"
 
+// 动态shape推理接口
 def ShapeInterface : OpInterface<"ShapeInterface"> {
   let description = [{
   }];
