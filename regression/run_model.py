@@ -6,6 +6,13 @@
 #
 # ==============================================================================
 
+# 这是TPU-MLIR项目的核心驱动脚本，主要实现 ​​从原始模型到TPU可执行文件(bmodel/cvimodel)的端到端编译流程​​。代码通过MODEL_RUN类封装了以下核心功能：
+# 模型转换​​：支持ONNX/TFLite/Caffe等框架转MLIR
+# 量化校准​​：生成INT8/INT4/Float8等精度校准表
+# ​芯片适配​​：针对BM1684X/CV18XX等不同TPU架构优化
+# ​动态编译​​：支持动态形状模型的编译优化
+# ​正确性验证​​：通过NPZ文件对比确保转换精度
+
 from tools.npz_tool import npz_compare
 from utils.preprocess import supported_customization_format
 from utils.mlir_shell import _os_system
@@ -21,6 +28,7 @@ import queue
 from utils.misc import *
 import re
 
+# 一个全局的driver
 def extract_profile_info(file_path):
     with open(file_path, 'rb') as f:
         f.seek(0, 2)
@@ -68,6 +76,8 @@ class MODEL_RUN(object):
         self.disable_thread = disable_thread
         self.debug = debug
         self.model_type = chip_support[self.chip][-1]
+
+        # 将模型变成
         self.command = f"run_model.py {model_name} --chip {chip} --mode {mode} --num_core {num_core}"
         self.num_core = num_core
         self.use_cuda = use_cuda
@@ -159,6 +169,14 @@ class MODEL_RUN(object):
             self.ini_content["do_dynamic"])) and chip_support[self.chip][-2]
         self.compress_mode = config.get(self.arch, "compress_mode", fallback="none") if chip == 'bm1688' else "none"
 
+    # 调用model transform工具，将onnx文件转变成也能够mlir
+    # model_transform.py \
+    # --model_name resnet50 \
+    # --model_def resnet50.onnx \
+    # --input_shapes [[1,3,224,224]] \
+    # --mean 103.939,116.779,123.68 \
+    # --scale 0.017,0.017,0.017 \
+    # --mlir resnet50_top.mlir
     def run_model_transform(self, model_name: str, dynamic: bool = False):
         '''transform from origin model to top mlir'''
         cmd = ["model_transform.py"]
@@ -213,6 +231,7 @@ class MODEL_RUN(object):
             cmd += ["--excepts {}".format(self.ini_content["excepts"])]
         _os_system(cmd, self.save_log)
 
+    # 如果需要量化校准，会制作校准表
     def make_calibration_table(self):
         '''generate calibration when there is no existing one'''
         for mode in self.quant_modes:
@@ -343,6 +362,13 @@ class MODEL_RUN(object):
         _os_system(cmd, self.save_log)
         return new_test_input
 
+    # 将tpu mlir部署到tpu上，生成npz等可执行
+    # model_deploy.py \
+    # --mlir resnet50_opt.mlir \
+    # --quantize INT8 \
+    # --calibration_table resnet50_cali_table \
+    # --chip bm1684x \
+    # --model resnet50_final.bmodel
     def run_model_deploy(self,
                          quant_mode: str,
                          model_name: str,

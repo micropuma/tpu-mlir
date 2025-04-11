@@ -25,6 +25,7 @@ from utils.cache_tool import CommandRecorder
 
 logger = setup_logger("transform")
 
+# 一个driver 工具
 class ModelTransformer(object):
 
     def __init__(self, model_name, model_def):
