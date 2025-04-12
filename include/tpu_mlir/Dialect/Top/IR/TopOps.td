@@ -21,9 +21,13 @@ include "mlir/IR/EnumAttr.td"
 include "mlir/IR/OpBase.td"
 //include "mlir/IR/BuiltinTypes.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+
+// include 针对tpu-mlir编写的interface
 include "tpu_mlir/Interfaces/InferenceInterface.td"
 include "tpu_mlir/Interfaces/FlopsInterface.td"
 include "tpu_mlir/Interfaces/ShapeInterface.td"
+
+// 一些trait属性的定义，比如same shape等属性
 include "tpu_mlir/Traits/Traits.td"
 
 // =============================================================================
@@ -523,7 +527,9 @@ def Top_UnpackOp: Top_Op<"Unpack"> {
   let hasCanonicalizer = 1;
 }
 
+// 定义conv op可以和relu op融合
 def Top_ConvOp: Top_Op<"Conv", [SupportFuseRelu,
+  // 定义使用InferenceInterface的接口，支持backward_weight方法
   DeclareOpInterfaceMethods<InferenceInterface,["backward_weight"]>]> {
   let summary = "Convolution operator";
 
@@ -578,19 +584,27 @@ def Top_ConvOp: Top_Op<"Conv", [SupportFuseRelu,
   }];
 
   let arguments = (ins
+    // learnable weights and biases
     AnyTensor:$input,
     AnyTensor:$filter,
     AnyTensorOrNone:$bias,
+
+    // compile-time determined parameters
     I64ArrayAttr:$kernel_shape,
     I64ArrayAttr:$strides,
-    I64ArrayAttr:$pads, // top,left,bottom,right
+    I64ArrayAttr:$pads, // top,left,bottom,right, contains four ints
+
+    // maybe useful for layergourp?
     DefaultValuedAttr<I64Attr, "1">:$group,
     OptionalAttr<I64ArrayAttr>:$dilations,
     OptionalAttr<I64ArrayAttr>:$inserts,
+    // whether automatically add relu after conv
     DefaultValuedAttr<BoolAttr, "false">:$do_relu,
     DefaultValuedAttr<F64Attr, "-1.0">:$relu_limit,
+    // whether to reorder weight dynamically
     DefaultValuedAttr<BoolAttr, "false">:$dynweight_reorderd,
     DefaultValuedAttr<I64Attr, "1">:$weight_is_coeff,
+    // whether to apply winograd algorithm
     OptionalAttr<BoolAttr>:$do_winograd,
     OptionalAttr<AutoPadModeAttr>:$auto_pad, // only used in shape infer
     OptionalAttr<F64Attr>:$in_int4_scale,

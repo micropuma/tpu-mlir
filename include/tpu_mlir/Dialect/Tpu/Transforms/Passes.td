@@ -108,6 +108,7 @@ def AddressAssign : Pass<"address-assign", "ModuleOp"> {
   ];
 }
 
+// tpu codegen pass
 def Codegen : Pass<"codegen", "ModuleOp"> {
   let summary = "codegen in tpu by tpuc-opt";
   let constructor = "createCodegenPass()";

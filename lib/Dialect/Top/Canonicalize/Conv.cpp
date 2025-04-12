@@ -10,6 +10,11 @@
 #include "tpu_mlir/Support/MathUtils.h"
 #include "tpu_mlir/Support/OpRewriterPatternEx.h"
 
+// 维度转换​​：通过Reshape和属性调整，将1D/3D卷积适配到2D实现。
+// ​操作融合​​：合并连续卷积，减少计算量和内存访问。
+// 消除冗余操作​​：如通过转置Filter替代显式的PermuteOp。
+// ​条件检查​​：确保重写不会改变语义（如无padding、无激活函数）。
+
 using namespace tpu_mlir::top;
 
 // Conv1dTo2d.cpp
@@ -161,6 +166,8 @@ struct Conv3dTranspose : public OpRewriterPatternEx<ConvOp> {
   }
 };
 
+// 合并1x1 conv + kxk conv
+// 1x1 conv用于减少channel数
 struct Conv1x1Convkxk2dMerge : public OpRewriterPatternEx<ConvOp> {
   using OpRewriterPatternEx::OpRewriterPatternEx;
 
@@ -172,11 +179,14 @@ struct Conv1x1Convkxk2dMerge : public OpRewriterPatternEx<ConvOp> {
     if (module::isUniformQuantized(op.getOutput())) {
       return failure();
     }
+
+    // 获取kernel的shape
     auto kernel = module::getI64Array(op.getKernelShape());
     if (kernel->size() != 2) {
       return failure();
     }
     auto storage_type = module::getStorageType(op.getOutput());
+    // 目前只支持f32和f16这两个类型
     if (!storage_type.isF32() && !storage_type.isF16()) {
       return failure();
     }
@@ -184,6 +194,7 @@ struct Conv1x1Convkxk2dMerge : public OpRewriterPatternEx<ConvOp> {
     auto inputOperand = op.getInput();
     auto prevOp = inputOperand.getDefiningOp();
     auto prevConvOp = dyn_cast<ConvOp>(prevOp);
+    // 判断是否input也是一个convop，如果没有，则没有可以组合的convop
     if (!prevConvOp) {
       // There is no previous ConvOp
       return failure();
@@ -196,10 +207,13 @@ struct Conv1x1Convkxk2dMerge : public OpRewriterPatternEx<ConvOp> {
         return failure();
       }
 
+      // 目前的简单融合十分局限，仅限于producer conv只有单一consumer
       if (!prevConvOp.getResult().hasOneUse()) {
         return failure();
       }
 
+      // 如果两个已经在不同的group内部，即npu不同layergroup了，则不能融合
+      // 非深度可分卷积
       if (prevConvOp.getGroup() != 1 || op.getGroup() != 1) {
         return failure();
       }
@@ -212,10 +226,12 @@ struct Conv1x1Convkxk2dMerge : public OpRewriterPatternEx<ConvOp> {
         return failure();
       }
 
+      // 后续要做relu操作，则可能会打断融合？
       if (p.do_relu || prep.do_relu) {
         return failure();
       }
 
+      // 深度学习中，filterop是可学习的，因此define point是weight op
       auto Filterop = op.getFilter().getDefiningOp<top::WeightOp>();
       auto Filterop_f32 = Filterop.read_as_float();
       std::vector<int64_t> filterShape = module::getShape(op.getFilter());
@@ -226,28 +242,39 @@ struct Conv1x1Convkxk2dMerge : public OpRewriterPatternEx<ConvOp> {
           module::getShape(prevConvOp.getFilter());
 
       // transform prefilterShape, exchange dim ic and oc
+      // 将input channel和ouput channel呼唤
       std::vector<int64_t> ps = {1, 0, 2, 3};
       auto prefilter_f32_tp =
           std::make_shared<std::vector<float>>(preFilterop_f32->size(), 0);
+      // 数据重排序
+      // [D,C,1,1]变成[C,D,1,1]
       function_permute(preFilterop_f32->data(), prefilter_f32_tp->data(),
                        prefilterShape, ps);
 
       // calculate merge filter's weight
       //  Convkxk = [E, D, K, K], Conv1x1_trans = [C, D, 1, 1], Conv1x1 = [D, C,
       //  1, 1]
+      // 计算合并后的卷积权重
+      // C是1x1的输入维度，D是输出维度，是kxk的输入，E是kxk的输出维度
       int E = filterShape.at(0), D = filterShape.at(1), K = filterShape.at(2),
           C = prefilterShape.at(1);
       int eckk = E * C * K * K;
       int ckk = C * K * K;
       int kk = K * K;
+
+      // 计算出合并后的卷积权重的size
       auto filter_merge = std::make_shared<std::vector<float>>(size_t(eckk), 0);
       // TODO. Use pass to set option attr to the op before Canonicalize.
       // For the rare case: w0(63, 1536, 1) w1(18507, 63, 1) -> [18507, 1536, 1]
+
+      // 计算合并后的卷积权重的size
       int edkk = E * D * K * K;
       if ((float)eckk / (edkk + C * D) > 20 /* for this case */) {
         return failure();
       }
 
+      // todo：学习openmp的内嵌写法
+      // 可以加速矩阵算子？
 #pragma omp parallel for schedule(static, omp_schedule(eckk))
       for (int i = 0; i < eckk; ++i) {
         int e = i / ckk;
@@ -288,7 +315,9 @@ struct Conv1x1Convkxk2dMerge : public OpRewriterPatternEx<ConvOp> {
         }
       }
 
+      // 做替换处理
       // remove prevConvOp
+      // 完全剔除1x1 convop
       prevConvOp.getOutput().replaceAllUsesWith(prevConvOp.getInput());
       rewriter.eraseOp(prevConvOp);
 
@@ -301,6 +330,7 @@ struct Conv1x1Convkxk2dMerge : public OpRewriterPatternEx<ConvOp> {
       op.getFilter().setType(mnew_type);
 
       // setup merige_filter_weight
+      // 将合并后的权重和偏置应用到当前卷积层，并删除原1x1卷积层。
       auto mnew_op = WeightOp::create_float(
           op, "merge_filter_weight", *filter_merge, mfilterShape, storage_type);
       op->setOperand(1, mnew_op);
@@ -323,8 +353,10 @@ struct Conv1x1Convkxk2dMerge : public OpRewriterPatternEx<ConvOp> {
   }
 };
 
+// 在mlir中定义标准化操作，使用patternrewrite机制而不是fold
 void ConvOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                          MLIRContext *context) {
+  // 定义四种卷积优化操作
   results
       .insert<Conv3dTranspose, Conv3dTo2d, Conv1dTo2d, Conv1x1Convkxk2dMerge>(
           context);

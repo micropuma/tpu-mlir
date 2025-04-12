@@ -16,6 +16,7 @@ class TPUMLIROpTrait<string name> : NativeOpTrait<name> {
   let cppNamespace = "::tpu_mlir::trait";
 }
 
+// 定义operation可能用到的trait
 def ShapeProducer : TPUMLIROpTrait<"ShapeProducer">;
 def ShapeConsumer : TPUMLIROpTrait<"ShapeConsumer">;
 def ScalarProducer : TPUMLIROpTrait<"ScalarProducer">;
