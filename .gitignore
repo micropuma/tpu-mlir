@@ -25,3 +25,4 @@ bmodel_fbs.py
 cross_toolchains/
 dist/
 !/python/tools/soc_infer/debugger/bmodel_fbs.py
+tutorial/
